@@ -12,6 +12,7 @@ import {
   ClipboardList,
   Copy,
   Leaf,
+  Minus,
   Plus,
   Radio,
   Search,
