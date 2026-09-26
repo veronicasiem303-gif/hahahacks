@@ -21,6 +21,10 @@ import {
 
 const defaultHousehold = 'sunny-kitchen'
 
+function formatExpirationDate(value) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function readMember() {
   const saved = localStorage.getItem('goodthings-member')
   if (saved) return JSON.parse(saved)
@@ -38,6 +42,7 @@ export default function App() {
   const [selectedList, setSelectedList] = useState('get')
   const [newItem, setNewItem] = useState('')
   const [category, setCategory] = useState('Produce')
+  const [expirationDate, setExpirationDate] = useState('')
   const [modal, setModal] = useState('')
   const [householdName, setHouseholdName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
@@ -89,8 +94,9 @@ export default function App() {
     event.preventDefault()
     const name = newItem.trim()
     if (!name) return
-    emit('list:add', { name, category })
+    emit('list:add', { name, category, expirationDate })
     setNewItem('')
+    setExpirationDate('')
   }
 
   function updateMember(event) {
@@ -207,6 +213,7 @@ export default function App() {
                 <select aria-label="Item category" value={category} onChange={(event) => setCategory(event.target.value)}>
                   <option>Produce</option><option>Dairy & eggs</option><option>Bakery</option><option>Pantry</option><option>Household</option><option>Other</option>
                 </select>
+                <input aria-label="Expiration date" type="date" min={new Date().toLocaleDateString('en-CA')} value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} />
                 <button className="add-submit" type="submit" aria-label="Add item"><Plus size={18} /></button>
               </form>
 
@@ -222,7 +229,7 @@ export default function App() {
                 {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : selectedList === 'fridge' ? 'Check off an item on “To get” to move it here.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
                   <div className={`grocery-row ${item.done ? 'grocery-row-done' : ''}`} key={item.id}>
                     <button className="check-button" aria-label={item.done ? `Move ${item.name} back to To get` : `Mark ${item.name} in the fridge`} onClick={() => emit('list:toggle', { itemId: item.id })}>{item.done && <Check size={14} strokeWidth={3} />}</button>
-                    <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span></div>
+                    <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span>{item.expirationDate && <span className="item-expiry">Expires {formatExpirationDate(item.expirationDate)}</span>}</div>
                     <span className={`added-avatar avatar-${household?.members?.find((person) => person.name === item.addedBy)?.color || 'blue'}`} title={`Added by ${item.addedBy}`}>{item.addedBy.slice(0, 1).toUpperCase()}</span>
                     <span className="added-by">{item.addedBy}</span>
                     <button className="row-remove" aria-label={`Remove ${item.name}`} title="Remove item" onClick={() => emit('list:remove', { itemId: item.id })}><Trash2 size={15} /></button>
