@@ -130,5 +130,5 @@ io.on('connection', (socket) => {
 })
 
 server.listen(port, () => {
-  console.log(`Goodthings API listening on http://localhost:${port}`)
+  console.log(`MyFridge API listening on http://localhost:${port}`)
 })
