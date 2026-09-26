@@ -1,0 +1,15 @@
+{
+  "name": "goodthings-household-groceries",
+  "private": true,
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev --workspace frontend\" \"npm:dev --workspace backend\"",
+    "build": "npm run build --workspace frontend",
+    "lint": "oxlint frontend/src backend/src",
+    "start": "npm run start --workspace backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "oxlint": "^1.81.0"
+  }
+}
