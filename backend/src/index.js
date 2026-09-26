@@ -118,7 +118,7 @@ io.on('connection', (socket) => {
     sendHousehold(householdId)
   })
 
-  socket.on('list:add', ({ name, category, expirationDate: rawExpirationDate } = {}) => {
+  socket.on('list:add', ({ name, category, expirationDate: rawExpirationDate, done = false } = {}) => {
     const household = households.get(socket.data.householdId)
     const itemName = String(name || '').trim()
     const expirationDate = normalizeExpirationDate(rawExpirationDate)
@@ -129,7 +129,7 @@ io.on('connection', (socket) => {
       name: itemName,
       category: category || 'Other',
       addedBy: socket.data.member.name,
-      done: false,
+      done: Boolean(done),
       expirationDate,
     })
     sendHousehold(household.id)
