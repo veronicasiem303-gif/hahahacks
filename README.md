@@ -1,4 +1,4 @@
-# Goodthings
+# MyFridge
 
 A hackathon starter for a shared household grocery list. The React frontend and Express/Socket.IO backend are kept in separate `frontend` and `backend` workspaces.
 
