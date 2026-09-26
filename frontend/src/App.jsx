@@ -21,6 +21,10 @@ import {
 
 const defaultHousehold = 'sunny-kitchen'
 
+function formatExpirationDate(value) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function readMember() {
   const saved = localStorage.getItem('goodthings-member')
   if (saved) return JSON.parse(saved)
@@ -35,8 +39,10 @@ export default function App() {
   const [household, setHousehold] = useState(null)
   const [connected, setConnected] = useState(false)
   const [query, setQuery] = useState('')
+  const [selectedList, setSelectedList] = useState('get')
   const [newItem, setNewItem] = useState('')
   const [category, setCategory] = useState('Produce')
+  const [expirationDate, setExpirationDate] = useState('')
   const [modal, setModal] = useState('')
   const [householdName, setHouseholdName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
@@ -76,8 +82,9 @@ export default function App() {
   const checkedItems = items.filter((item) => item.done)
   const visibleItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
-    return items.filter((item) => !normalizedQuery || `${item.name} ${item.category} ${item.addedBy}`.toLowerCase().includes(normalizedQuery))
-  }, [items, query])
+    const shouldBeDone = selectedList === 'fridge'
+    return items.filter((item) => item.done === shouldBeDone && (!normalizedQuery || `${item.name} ${item.category} ${item.addedBy}`.toLowerCase().includes(normalizedQuery)))
+  }, [items, query, selectedList])
 
   function emit(event, data) {
     socketRef.current?.emit(event, data)
@@ -87,8 +94,9 @@ export default function App() {
     event.preventDefault()
     const name = newItem.trim()
     if (!name) return
-    emit('list:add', { name, category })
+    emit('list:add', { name, category, expirationDate })
     setNewItem('')
+    setExpirationDate('')
   }
 
   function updateMember(event) {
@@ -145,9 +153,9 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#home" aria-label="Goodthings home">
+        <a className="brand" href="#home" aria-label="MyFridge home">
           <span className="brand-mark"><Leaf size={19} strokeWidth={2.2} /></span>
-          <span>goodthings<span className="brand-period">.</span></span>
+          <span>MyFridge<span className="brand-period">.</span></span>
         </a>
         <div className="side-label">YOUR SPACE</div>
         <button className="nav-item nav-item-active"><ShoppingBasket size={18} /><span>Grocery list</span><span className="nav-count">{activeItems.length}</span></button>
@@ -192,7 +200,7 @@ export default function App() {
           <section className="dashboard-grid">
             <div className="list-panel">
               <div className="list-heading">
-                <div><div className="section-kicker">YOUR SHARED LIST</div><h2>Shopping list <span className="item-count">{activeItems.length}</span></h2></div>
+                <div><div className="section-kicker">YOUR SHARED LIST</div><h2>{selectedList === 'get' ? 'Shopping list' : 'In your fridge'} <span className="item-count">{selectedList === 'get' ? activeItems.length : checkedItems.length}</span></h2></div>
                 <div className="list-heading-actions">
                   {household?.inviteCode && <button className="invite-button" onClick={copyInvite}><Copy size={15} /><span>Invite</span></button>}
                   <button className="icon-button sort-button" aria-label="List options" title="List options"><ArrowDownUp size={16} /></button>
@@ -205,19 +213,23 @@ export default function App() {
                 <select aria-label="Item category" value={category} onChange={(event) => setCategory(event.target.value)}>
                   <option>Produce</option><option>Dairy & eggs</option><option>Bakery</option><option>Pantry</option><option>Household</option><option>Other</option>
                 </select>
+                <input aria-label="Expiration date" type="date" min={new Date().toLocaleDateString('en-CA')} value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} />
                 <button className="add-submit" type="submit" aria-label="Add item"><Plus size={18} /></button>
               </form>
 
               <div className="list-toolbar">
-                <div className="list-tabs"><span className="list-tab-active">To get <b>{activeItems.length}</b></span><span className="list-tab-muted">In basket <b>{checkedItems.length}</b></span></div>
+                <div className="list-tabs" role="group" aria-label="Choose which items to view">
+                  <button type="button" className={selectedList === 'get' ? 'list-tab-active' : 'list-tab-muted'} aria-pressed={selectedList === 'get'} onClick={() => setSelectedList('get')}>To get <b>{activeItems.length}</b></button>
+                  <button type="button" className={selectedList === 'fridge' ? 'list-tab-active' : 'list-tab-muted'} aria-pressed={selectedList === 'fridge'} onClick={() => setSelectedList('fridge')}>In fridge <b>{checkedItems.length}</b></button>
+                </div>
                 <label className="search-box"><Search size={15} /><input placeholder="Find an item" aria-label="Find an item" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>/</kbd></label>
               </div>
 
               <div className="grocery-list">
-                {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
+                {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : selectedList === 'fridge' ? 'Check off an item on “To get” to move it here.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
                   <div className={`grocery-row ${item.done ? 'grocery-row-done' : ''}`} key={item.id}>
-                    <button className="check-button" aria-label={item.done ? `Uncheck ${item.name}` : `Check off ${item.name}`} onClick={() => emit('list:toggle', { itemId: item.id })}>{item.done && <Check size={14} strokeWidth={3} />}</button>
-                    <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span></div>
+                    <button className="check-button" aria-label={item.done ? `Move ${item.name} back to To get` : `Mark ${item.name} in the fridge`} onClick={() => emit('list:toggle', { itemId: item.id })}>{item.done && <Check size={14} strokeWidth={3} />}</button>
+                    <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span>{item.expirationDate && <span className="item-expiry">Expires {formatExpirationDate(item.expirationDate)}</span>}</div>
                     <span className={`added-avatar avatar-${household?.members?.find((person) => person.name === item.addedBy)?.color || 'blue'}`} title={`Added by ${item.addedBy}`}>{item.addedBy.slice(0, 1).toUpperCase()}</span>
                     <span className="added-by">{item.addedBy}</span>
                     <button className="row-remove" aria-label={`Remove ${item.name}`} title="Remove item" onClick={() => emit('list:remove', { itemId: item.id })}><Trash2 size={15} /></button>
@@ -244,7 +256,7 @@ export default function App() {
               <div className="tip-note"><span className="tip-sparkle"><Sparkles size={15} /></span><p><strong>A little tip</strong>Keep the list open while you shop. Everyone at home can add things as they run out.</p></div>
             </aside>
           </section>
-          <footer className="page-footer"><span>GOODTHINGS FOR GOOD HOMES</span><span>Made for the people you share a fridge with.</span></footer>
+          <footer className="page-footer"><span>MYFRIDGE FOR GOOD HOMES</span><span>Made for the people you share a fridge with.</span></footer>
         </div>
       </main>
 

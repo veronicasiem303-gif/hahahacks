@@ -10,6 +10,12 @@ const io = new Server(server, {
 })
 const port = Number(process.env.PORT) || 4000
 
+function dateAfterDays(days) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return toDateKey(date)
+}
+
 app.use(express.json())
 
 const households = new Map([
@@ -23,11 +29,11 @@ const households = new Map([
       { id: 'jules', name: 'Jules', color: 'green' },
     ],
     items: [
-      { id: 'item-1', name: 'Ripe avocados', category: 'Produce', addedBy: 'Maya', done: false },
-      { id: 'item-2', name: 'Oat milk', category: 'Dairy & eggs', addedBy: 'Leo', done: false },
-      { id: 'item-3', name: 'Sourdough loaf', category: 'Bakery', addedBy: 'Jules', done: false },
-      { id: 'item-4', name: 'Cherry tomatoes', category: 'Produce', addedBy: 'Maya', done: true },
-      { id: 'item-5', name: 'Rigatoni', category: 'Pantry', addedBy: 'Leo', done: false },
+      { id: 'item-1', name: 'Ripe avocados', category: 'Produce', addedBy: 'Maya', done: false, expirationDate: dateAfterDays(2) },
+      { id: 'item-2', name: 'Oat milk', category: 'Dairy & eggs', addedBy: 'Leo', done: false, expirationDate: dateAfterDays(3) },
+      { id: 'item-3', name: 'Sourdough loaf', category: 'Bakery', addedBy: 'Jules', done: false, expirationDate: dateAfterDays(1) },
+      { id: 'item-4', name: 'Cherry tomatoes', category: 'Produce', addedBy: 'Maya', done: true, expirationDate: dateAfterDays(1) },
+      { id: 'item-5', name: 'Rigatoni', category: 'Pantry', addedBy: 'Leo', done: false, expirationDate: dateAfterDays(30) },
     ],
   }],
 ])
@@ -37,7 +43,7 @@ function publicHousehold(household) {
     id: household.id,
     name: household.name,
     inviteCode: household.inviteCode,
-    members: household.members,
+    members: household.members.map(({ id, name, color }) => ({ id, name, color })),
     items: household.items,
   }
 }
@@ -45,6 +51,20 @@ function publicHousehold(household) {
 function sendHousehold(householdId) {
   const household = households.get(householdId)
   if (household) io.to(householdId).emit('household:updated', publicHousehold(household))
+}
+
+function toDateKey(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function normalizeExpirationDate(value) {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? undefined : value
 }
 
 app.get('/api/health', (_request, response) => response.json({ status: 'ok' }))
@@ -90,7 +110,7 @@ io.on('connection', (socket) => {
 
     const existingMember = household.members.find((person) => person.id === member.id)
     if (!existingMember) {
-      household.members.push({ ...member, color: member.color || 'blue' })
+      household.members.push({ id: member.id, name: member.name, color: member.color || 'blue' })
     } else {
       existingMember.name = member.name
       existingMember.color = member.color || existingMember.color
@@ -98,10 +118,11 @@ io.on('connection', (socket) => {
     sendHousehold(householdId)
   })
 
-  socket.on('list:add', ({ name, category } = {}) => {
+  socket.on('list:add', ({ name, category, expirationDate: rawExpirationDate } = {}) => {
     const household = households.get(socket.data.householdId)
     const itemName = String(name || '').trim()
-    if (!household || !itemName) return
+    const expirationDate = normalizeExpirationDate(rawExpirationDate)
+    if (!household || !itemName || expirationDate === undefined) return
 
     household.items.unshift({
       id: randomUUID(),
@@ -109,6 +130,7 @@ io.on('connection', (socket) => {
       category: category || 'Other',
       addedBy: socket.data.member.name,
       done: false,
+      expirationDate,
     })
     sendHousehold(household.id)
   })
@@ -130,5 +152,5 @@ io.on('connection', (socket) => {
 })
 
 server.listen(port, () => {
-  console.log(`Goodthings API listening on http://localhost:${port}`)
+  console.log(`MyFridge API listening on http://localhost:${port}`)
 })
