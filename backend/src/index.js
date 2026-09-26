@@ -21,7 +21,7 @@ app.use(express.json())
 const households = new Map([
   ['sunny-kitchen', {
     id: 'sunny-kitchen',
-    name: 'The Sunny Kitchen',
+    name: 'HaHaHouse',
     inviteCode: 'SUNNY24',
     members: [
       { id: 'maya', name: 'Maya', color: 'coral' },
@@ -29,11 +29,18 @@ const households = new Map([
       { id: 'jules', name: 'Jules', color: 'green' },
     ],
     items: [
-      { id: 'item-1', name: 'Ripe avocados', category: 'Produce', addedBy: 'Maya', done: false, quantity: 3, expirationDate: dateAfterDays(2) },
-      { id: 'item-2', name: 'Oat milk', category: 'Dairy & eggs', addedBy: 'Leo', done: false, quantity: 3, expirationDate: dateAfterDays(3) },
-      { id: 'item-3', name: 'Sourdough loaf', category: 'Bakery', addedBy: 'Jules', done: false, quantity: 3, expirationDate: dateAfterDays(1) },
-      { id: 'item-4', name: 'Cherry tomatoes', category: 'Produce', addedBy: 'Maya', done: true, quantity: 1, expirationDate: dateAfterDays(1) },
-      { id: 'item-5', name: 'Rigatoni', category: 'Pantry', addedBy: 'Leo', done: false, quantity: 3, expirationDate: dateAfterDays(30) },
+      { id: 'item-1', name: 'Ripe avocados', category: 'Produce', addedBy: 'Maya', status: 'needed', quantity: 3, expirationDate: dateAfterDays(2) },
+      { id: 'item-2', name: 'Oat milk', category: 'Dairy & eggs', addedBy: 'Leo', status: 'needed', quantity: 3, expirationDate: dateAfterDays(3) },
+      { id: 'item-3', name: 'Sourdough loaf', category: 'Bakery', addedBy: 'Jules', status: 'needed', quantity: 3, expirationDate: dateAfterDays(1) },
+      { id: 'item-4', name: 'Cherry tomatoes', category: 'Produce', addedBy: 'Maya', status: 'inFridge', quantity: 1, expirationDate: dateAfterDays(1) },
+      { id: 'item-5', name: 'Rigatoni', category: 'Pantry', addedBy: 'Leo', status: 'needed', quantity: 3, expirationDate: dateAfterDays(30) },
+      { id: 'item-6', name: 'Baby spinach', category: 'Produce', addedBy: 'Jules', status: 'inFridge', quantity: 3, expirationDate: dateAfterDays(4) },
+      { id: 'item-7', name: 'Strawberries', category: 'Produce', addedBy: 'Leo', status: 'inFridge', quantity: 3, expirationDate: dateAfterDays(2) },
+      { id: 'item-8', name: 'Greek yogurt', category: 'Dairy & eggs', addedBy: 'Maya', status: 'inFridge', quantity: 3, expirationDate: dateAfterDays(6) },
+      { id: 'item-9', name: 'Parmesan', category: 'Dairy & eggs', addedBy: 'Jules', status: 'inFridge', quantity: 3, expirationDate: dateAfterDays(12) },
+      { id: 'item-10', name: 'Lemons', category: 'Produce', addedBy: 'Leo', status: 'inFridge', quantity: 3, expirationDate: dateAfterDays(10) },
+      { id: 'item-11', name: 'Eggs', category: 'Dairy & eggs', addedBy: 'Maya', status: 'needed', quantity: 3, expirationDate: dateAfterDays(8) },
+      { id: 'item-12', name: 'Tortilla wraps', category: 'Bakery', addedBy: 'Jules', status: 'needed', quantity: 3, expirationDate: dateAfterDays(5) },
     ],
   }],
 ])
@@ -129,7 +136,7 @@ io.on('connection', (socket) => {
       name: itemName,
       category: category || 'Other',
       addedBy: socket.data.member.name,
-      done: false,
+      status: 'needed',
       quantity: 3,
       expirationDate,
     })
@@ -140,7 +147,9 @@ io.on('connection', (socket) => {
     const household = households.get(socket.data.householdId)
     const item = household?.items.find((entry) => entry.id === itemId)
     if (!item) return
-    item.done = !item.done
+    if (item.status === 'needed') item.status = 'inFridge'
+    else if (item.status === 'inFridge') item.status = 'used'
+    else return
     sendHousehold(household.id)
   })
 
@@ -148,7 +157,7 @@ io.on('connection', (socket) => {
     const household = households.get(socket.data.householdId)
     const item = household?.items.find((entry) => entry.id === itemId)
     const nextQuantity = Number(quantity)
-    if (!item?.done || !Number.isInteger(nextQuantity) || nextQuantity < 0 || nextQuantity > 999) return
+    if (item?.status !== 'inFridge' || !Number.isInteger(nextQuantity) || nextQuantity < 0 || nextQuantity > 999) return
     item.quantity = nextQuantity
     sendHousehold(household.id)
   })
