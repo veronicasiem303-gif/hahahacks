@@ -84,3 +84,22 @@ h1 { margin: 11px 0 7px; color: #24352a; font: 700 36px/1.18 var(--display); let
   .add-form input[type="date"] { grid-area: expiry; width: 100%; min-width: 0; }
   .add-submit { grid-area: submit; }
 }
+.alert-count { background: #f5e8d7; color: #9b6842; }
+.notification-nav { margin-top: 9px; border-top: 1px solid #ddded4; border-radius: 0; padding-top: 8px; color: #7e8879; }
+.notification-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: #c5c8be; }
+.notification-dot.notification-on { background: #6d9b70; box-shadow: 0 0 0 3px #e2eee1; }
+.stock-adjuster { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; min-height: 27px; padding: 0 4px; border: 1px solid #e8e9df; border-radius: 5px; color: #74806e; background: #fffefa; font-size: 10px; }
+.stock-adjuster > button { display: grid; width: 19px; height: 21px; place-items: center; padding: 0; border: 0; border-radius: 3px; background: transparent; color: #72866e; cursor: pointer; }
+.stock-adjuster > button:hover:not(:disabled) { background: #edf2e9; }
+.stock-adjuster > button:disabled { color: #c4c7bd; cursor: not-allowed; }
+.stock-adjuster > span { min-width: 29px; color: #546552; font-size: 9px; text-align: center; white-space: nowrap; }
+.stock-adjuster > span small { color: #93988c; font-size: 8px; }
+.stock-adjuster-low { border-color: #edddc9; background: #fcf6ed; }
+.stock-adjuster-low > span { color: #a46943; font-weight: 700; }
+@media (max-width: 620px) {
+  .notification-nav { margin-top: 9px; padding-top: 8px; }
+  .notification-dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border: 1px solid #eeeee5; }
+  .stock-adjuster { gap: 1px; padding: 0 2px; }
+  .stock-adjuster > button { width: 17px; }
+  .stock-adjuster > span { min-width: 25px; }
+}

@@ -29,11 +29,11 @@ const households = new Map([
       { id: 'jules', name: 'Jules', color: 'green' },
     ],
     items: [
-      { id: 'item-1', name: 'Ripe avocados', category: 'Produce', addedBy: 'Maya', done: false, expirationDate: dateAfterDays(2) },
-      { id: 'item-2', name: 'Oat milk', category: 'Dairy & eggs', addedBy: 'Leo', done: false, expirationDate: dateAfterDays(3) },
-      { id: 'item-3', name: 'Sourdough loaf', category: 'Bakery', addedBy: 'Jules', done: false, expirationDate: dateAfterDays(1) },
-      { id: 'item-4', name: 'Cherry tomatoes', category: 'Produce', addedBy: 'Maya', done: true, expirationDate: dateAfterDays(1) },
-      { id: 'item-5', name: 'Rigatoni', category: 'Pantry', addedBy: 'Leo', done: false, expirationDate: dateAfterDays(30) },
+      { id: 'item-1', name: 'Ripe avocados', category: 'Produce', addedBy: 'Maya', done: false, quantity: 3, expirationDate: dateAfterDays(2) },
+      { id: 'item-2', name: 'Oat milk', category: 'Dairy & eggs', addedBy: 'Leo', done: false, quantity: 3, expirationDate: dateAfterDays(3) },
+      { id: 'item-3', name: 'Sourdough loaf', category: 'Bakery', addedBy: 'Jules', done: false, quantity: 3, expirationDate: dateAfterDays(1) },
+      { id: 'item-4', name: 'Cherry tomatoes', category: 'Produce', addedBy: 'Maya', done: true, quantity: 1, expirationDate: dateAfterDays(1) },
+      { id: 'item-5', name: 'Rigatoni', category: 'Pantry', addedBy: 'Leo', done: false, quantity: 3, expirationDate: dateAfterDays(30) },
     ],
   }],
 ])
@@ -130,6 +130,7 @@ io.on('connection', (socket) => {
       category: category || 'Other',
       addedBy: socket.data.member.name,
       done: false,
+      quantity: 3,
       expirationDate,
     })
     sendHousehold(household.id)
@@ -140,6 +141,15 @@ io.on('connection', (socket) => {
     const item = household?.items.find((entry) => entry.id === itemId)
     if (!item) return
     item.done = !item.done
+    sendHousehold(household.id)
+  })
+
+  socket.on('list:quantity', ({ itemId, quantity } = {}) => {
+    const household = households.get(socket.data.householdId)
+    const item = household?.items.find((entry) => entry.id === itemId)
+    const nextQuantity = Number(quantity)
+    if (!item?.done || !Number.isInteger(nextQuantity) || nextQuantity < 0 || nextQuantity > 999) return
+    item.quantity = nextQuantity
     sendHousehold(household.id)
   })
 
