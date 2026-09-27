@@ -12,6 +12,7 @@ import {
   ClipboardList,
   Copy,
   Leaf,
+  Minus,
   Plus,
   Radio,
   Search,
@@ -92,8 +93,8 @@ export default function App() {
   }, [notice])
 
   const items = household?.items || []
-  const activeItems = useMemo(() => items.filter((item) => !item.done), [items])
-  const checkedItems = useMemo(() => items.filter((item) => item.done), [items])
+  const activeItems = useMemo(() => items.filter((item) => item.status === 'needed'), [items])
+  const checkedItems = useMemo(() => items.filter((item) => item.status === 'inFridge'), [items])
   const expiringItems = useMemo(() => checkedItems.filter((item) => item.expirationDate && daysUntilExpiration(item.expirationDate, clockTick) <= 3), [checkedItems, clockTick])
   const lowStockItems = useMemo(() => checkedItems.filter((item) => Number(item.quantity ?? 3) <= 1), [checkedItems])
   const visibleItems = useMemo(() => {
@@ -101,8 +102,8 @@ export default function App() {
     const matchesQuery = (item) => !normalizedQuery || `${item.name} ${item.category} ${item.addedBy}`.toLowerCase().includes(normalizedQuery)
     if (spaceView === 'expiring') return expiringItems.filter(matchesQuery)
     if (spaceView === 'low') return lowStockItems.filter(matchesQuery)
-    const shouldBeDone = selectedList === 'fridge'
-    return items.filter((item) => item.done === shouldBeDone && matchesQuery(item))
+    const expectedStatus = selectedList === 'fridge' ? 'inFridge' : 'needed'
+    return items.filter((item) => item.status === expectedStatus && matchesQuery(item))
   }, [expiringItems, items, lowStockItems, query, selectedList, spaceView])
 
   useEffect(() => {
@@ -160,6 +161,12 @@ export default function App() {
     emit('list:add', { name, category, expirationDate })
     setNewItem('')
     setExpirationDate('')
+    setNotice(`${name} is on the list. Your housemates say thanks!`)
+  }
+
+  function toggleItem(item) {
+    emit('list:toggle', { itemId: item.id })
+    setNotice(item.status === 'needed' ? `${item.name} is in the fridge. Nice one!` : `${item.name} marked as used.`)
   }
 
   function updateMember(event) {
@@ -227,7 +234,7 @@ export default function App() {
         <button className="nav-item notification-nav" onClick={toggleNotifications}><Bell size={18} /><span>{notificationsEnabled ? 'Browser alerts on' : 'Turn on notifications'}</span><span className={`notification-dot ${notificationsEnabled ? 'notification-on' : ''}`} /></button>
         <button className="nav-item" onClick={() => setModal('join')}><UsersRound size={18} /><span>Households</span></button>
         <div className="sidebar-bottom">
-          <div className="side-tip"><Sparkles size={16} /><span>Little by little,<br />the fridge fills up.</span></div>
+          <div className="side-tip"><Sparkles size={16} /><span>{checkedItems.length} good things stocked.<br />{activeItems.length ? `Only ${activeItems.length} to grab!` : 'Your crew is all set!'}</span></div>
           <button className="profile-button" onClick={() => setModal('profile')}>
             <span className={`avatar avatar-${member.color}`}>{member.name.slice(0, 1).toUpperCase()}</span>
             <span className="profile-copy"><strong>{member.name}</strong><small>Household member</small></span>
@@ -248,9 +255,9 @@ export default function App() {
         <div className="content-wrap">
           <section className="welcome-row">
             <div>
-              <div className="eyebrow"><span className="eyebrow-line" /> THE HOUSEHOLD LIST</div>
-              <h1>Good food starts<br className="mobile-break" /> with a <span>good list.</span></h1>
-              <p className="welcome-copy">A little note from everyone, all in one place.</p>
+              <div className="eyebrow"><span className="eyebrow-line" /> MADE BETTER TOGETHER</div>
+              <h1>A happier home starts<br className="mobile-break" /> in the <span>fridge.</span></h1>
+              <p className="welcome-copy">Everyone adds a little. Your fridge gets a lot happier.</p>
             </div>
             <div className="household-actions">
               <div className="member-stack" aria-label={`${household?.members?.length || 0} household members`}>
@@ -292,11 +299,11 @@ export default function App() {
               </div>
 
               <div className="grocery-list">
-                {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : spaceView === 'expiring' ? 'Nothing needs using soon' : spaceView === 'low' ? 'Nothing is running low' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : spaceView === 'expiring' ? 'We’ll show fridge items with a best-by date in the next 3 days.' : spaceView === 'low' ? 'Fridge quantities will appear here when they reach 1 or less.' : selectedList === 'fridge' ? 'Check off an item on “To get” to move it here.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
-                  <div className={`grocery-row ${item.done ? 'grocery-row-done' : ''}`} key={item.id}>
-                    <button className="check-button" aria-label={item.done ? `Move ${item.name} back to To get` : `Mark ${item.name} in the fridge`} onClick={() => emit('list:toggle', { itemId: item.id })}>{item.done && <Check size={14} strokeWidth={3} />}</button>
+                {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : spaceView === 'expiring' ? 'Nothing needs using soon' : spaceView === 'low' ? 'Nothing is running low' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : spaceView === 'expiring' ? 'We’ll show fridge items with a best-by date in the next 3 days.' : spaceView === 'low' ? 'Fridge quantities will appear here when they reach 1 or less.' : selectedList === 'fridge' ? 'Mark items in the fridge when you bring them home; mark them used when they run out.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
+                  <div className={`grocery-row ${item.status === 'inFridge' ? 'grocery-row-done' : ''}`} key={item.id}>
+                    <button className="check-button" aria-label={item.status === 'inFridge' ? `Mark ${item.name} as used` : `Mark ${item.name} in the fridge`} onClick={() => toggleItem(item)}>{item.status === 'inFridge' && <Check size={14} strokeWidth={3} />}</button>
                     <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span>{item.expirationDate && <span className="item-expiry">Expires {formatExpirationDate(item.expirationDate)}</span>}</div>
-                    {item.done && <div className={`stock-adjuster ${Number(item.quantity ?? 3) <= 1 ? 'stock-adjuster-low' : ''}`}><button aria-label={`Use one ${item.name}`} title="Use one" disabled={Number(item.quantity ?? 3) === 0} onClick={() => emit('list:quantity', { itemId: item.id, quantity: Math.max(0, Number(item.quantity ?? 3) - 1) })}><Minus size={13} /></button><span>{item.quantity ?? 3}<small> left</small></span><button aria-label={`Add one ${item.name}`} title="Add one" onClick={() => emit('list:quantity', { itemId: item.id, quantity: Number(item.quantity ?? 3) + 1 })}><Plus size={13} /></button></div>}
+                    {item.status === 'inFridge' && <div className={`stock-adjuster ${Number(item.quantity ?? 3) <= 1 ? 'stock-adjuster-low' : ''}`}><button aria-label={`Use one ${item.name}`} title="Use one" disabled={Number(item.quantity ?? 3) === 0} onClick={() => emit('list:quantity', { itemId: item.id, quantity: Math.max(0, Number(item.quantity ?? 3) - 1) })}><Minus size={13} /></button><span>{item.quantity ?? 3}<small> left</small></span><button aria-label={`Add one ${item.name}`} title="Add one" onClick={() => emit('list:quantity', { itemId: item.id, quantity: Number(item.quantity ?? 3) + 1 })}><Plus size={13} /></button></div>}
                     <span className={`added-avatar avatar-${household?.members?.find((person) => person.name === item.addedBy)?.color || 'blue'}`} title={`Added by ${item.addedBy}`}>{item.addedBy.slice(0, 1).toUpperCase()}</span>
                     <span className="added-by">{item.addedBy}</span>
                     <button className="row-remove" aria-label={`Remove ${item.name}`} title="Remove item" onClick={() => emit('list:remove', { itemId: item.id })}><Trash2 size={15} /></button>
