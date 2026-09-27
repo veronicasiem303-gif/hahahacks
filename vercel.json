@@ -1,6 +1,6 @@
 {
   "buildCommand": "npm run build --workspace frontend",
   "outputDirectory": "frontend/dist",
-  "installCommand": "npm install",
+  "installCommand": "npm install --ignore-scripts",
   "framework": "vite"
 }
