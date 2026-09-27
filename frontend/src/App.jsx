@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Tesseract from 'tesseract.js'
 import { io } from 'socket.io-client'
 import {
   ArrowDownUp,
   AlertTriangle,
   Bell,
+  Camera,
   Check,
   CheckCheck,
   ChevronDown,
@@ -19,11 +21,13 @@ import {
   ShoppingBasket,
   Sparkles,
   Trash2,
+  Upload,
   UsersRound,
   X,
 } from 'lucide-react'
 
 const defaultHousehold = 'sunny-kitchen'
+const receiptStopWords = new Set(['total', 'subtotal', 'tax', 'visa', 'mastercard', 'cash', 'change', 'thank you', 'thanks', 'store', 'receipt', 'items', 'grocery', 'card', 'payment', 'date', 'time', 'balance'])
 
 function formatExpirationDate(value) {
   return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -44,6 +48,27 @@ function readMember() {
   return member
 }
 
+function parseReceiptItems(rawText) {
+  const lines = rawText
+    .split(/\n|,|;/)
+    .map((line) => line.replace(/\r/g, '').trim())
+    .map((line) => line.replace(/^\d+\s*[.)-]\s*/, '').replace(/^[-•*]\s*/, '').replace(/^qty\s*/i, '').trim())
+    .map((line) => line.replace(/\$\s?\d+(?:\.\d{2})?/g, '').replace(/\b\d+(?:\.\d+)?\b/g, '').replace(/\s{2,}/g, ' ').trim())
+    .map((line) => line.replace(/\b(?:lb|oz|g|kg|ml|l|pcs|ct|ea|pack|pkg|box|bunch|doz)\b/gi, '').trim())
+
+  const uniqueItems = [...new Set(
+    lines
+      .map((line) => line.replace(/[^a-zA-Z&'\-\s]/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter((line) => line.length > 2 && line.length < 40)
+      .filter((line) => !/\d/.test(line))
+      .filter((line) => !receiptStopWords.has(line.toLowerCase()))
+      .filter((line) => !/^\s*$/.test(line))
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+  )]
+
+  return uniqueItems
+}
+
 export default function App() {
   const [member, setMember] = useState(readMember)
   const [householdId, setHouseholdId] = useState(localStorage.getItem('goodthings-household') || defaultHousehold)
@@ -61,8 +86,16 @@ export default function App() {
   const [householdName, setHouseholdName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [memberName, setMemberName] = useState(member.name)
+  const [receiptPreview, setReceiptPreview] = useState('')
+  const [detectedItems, setDetectedItems] = useState([])
+  const [isScanning, setIsScanning] = useState(false)
+  const [cameraActive, setCameraActive] = useState(false)
+  const [cameraError, setCameraError] = useState('')
   const [notice, setNotice] = useState('')
   const socketRef = useMemo(() => ({ current: null }), [])
+  const receiptPreviewRef = useRef('')
+  const cameraVideoRef = useRef(null)
+  const cameraStreamRef = useRef(null)
   const sentNotifications = useRef(new Set())
 
   useEffect(() => {
@@ -91,6 +124,38 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(''), 2400)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => {
+    if (modal !== 'receipt') {
+      stopCameraStream()
+      setCameraError('')
+      return undefined
+    }
+
+    startCameraCapture()
+
+    return () => {
+      stopCameraStream()
+      setCameraError('')
+    }
+  }, [modal])
+
+  useEffect(() => {
+    const video = cameraVideoRef.current
+    const stream = cameraStreamRef.current
+    if (!cameraActive || !video || !stream) return
+
+    video.srcObject = stream
+    video.play().catch((error) => {
+      console.error(error)
+      setCameraError('The camera started, but the live preview could not play. Try restarting the camera.')
+      setCameraActive(false)
+    })
+  }, [cameraActive])
+
+  useEffect(() => () => {
+    if (receiptPreviewRef.current) URL.revokeObjectURL(receiptPreviewRef.current)
+  }, [])
 
   const items = household?.items || []
   const activeItems = useMemo(() => items.filter((item) => item.status === 'needed'), [items])
@@ -169,6 +234,101 @@ export default function App() {
     setNotice(item.status === 'needed' ? `${item.name} is in the fridge. Nice one!` : `${item.name} marked as used.`)
   }
 
+  function stopCameraStream() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop())
+    cameraStreamRef.current = null
+    setCameraActive(false)
+  }
+
+  async function startCameraCapture() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Your browser does not support the camera. You can still upload a receipt image instead.')
+      return
+    }
+
+    try {
+      stopCameraStream()
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      })
+      cameraStreamRef.current = stream
+      setCameraActive(true)
+      setCameraError('')
+    } catch (error) {
+      console.error(error)
+      setCameraError('Camera access was blocked. Use the upload button to choose a receipt photo instead.')
+      setCameraActive(false)
+    }
+  }
+
+  async function runReceiptScan(imageSource) {
+    setDetectedItems([])
+    setIsScanning(true)
+    try {
+      const { data } = await Tesseract.recognize(imageSource, 'eng', { logger: () => undefined })
+      const parsedItems = parseReceiptItems(data.text)
+      setDetectedItems(parsedItems)
+      if (!parsedItems.length) {
+        setNotice('No grocery items were detected from this receipt. Try a clearer photo.')
+      }
+    } catch (error) {
+      console.error(error)
+      setNotice('Receipt scanning failed. Try another photo or use a clearer receipt.')
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
+  async function handleReceiptUpload(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    stopCameraStream()
+    setCameraActive(false)
+    if (receiptPreviewRef.current) URL.revokeObjectURL(receiptPreviewRef.current)
+    const nextPreview = URL.createObjectURL(file)
+    receiptPreviewRef.current = nextPreview
+    setReceiptPreview(nextPreview)
+    event.target.value = ''
+    await runReceiptScan(file)
+  }
+
+  function captureReceiptPhoto() {
+    const video = cameraVideoRef.current
+    if (!video) return
+
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth || 1280
+    canvas.height = video.videoHeight || 720
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+    stopCameraStream()
+    setCameraActive(false)
+    if (receiptPreviewRef.current) URL.revokeObjectURL(receiptPreviewRef.current)
+    receiptPreviewRef.current = dataUrl
+    setReceiptPreview(dataUrl)
+    runReceiptScan(dataUrl)
+  }
+
+  function submitReceiptItems(event) {
+    event.preventDefault()
+    if (!detectedItems.length) return
+
+    detectedItems.forEach((name) => {
+      emit('list:add', { name, category: 'Other', expirationDate: '', status: 'inFridge' })
+    })
+
+    setReceiptPreview('')
+    setDetectedItems([])
+    receiptPreviewRef.current = ''
+    setModal('')
+    setNotice(`${detectedItems.length} item${detectedItems.length === 1 ? '' : 's'} added to the fridge`)
+  }
+
   function updateMember(event) {
     event.preventDefault()
     const name = memberName.trim()
@@ -232,6 +392,7 @@ export default function App() {
         <button className={spaceView === 'expiring' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('expiring')}><Clock3 size={18} /><span>Expiring soon</span><span className="nav-count alert-count">{expiringItems.length}</span></button>
         <button className={spaceView === 'low' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('low')}><AlertTriangle size={18} /><span>Running low</span><span className="nav-count alert-count">{lowStockItems.length}</span></button>
         <button className="nav-item notification-nav" onClick={toggleNotifications}><Bell size={18} /><span>{notificationsEnabled ? 'Browser alerts on' : 'Turn on notifications'}</span><span className={`notification-dot ${notificationsEnabled ? 'notification-on' : ''}`} /></button>
+        <button className="nav-item" onClick={() => setModal('receipt')}><Camera size={18} /><span>Receipt scan</span></button>
         <button className="nav-item" onClick={() => setModal('join')}><UsersRound size={18} /><span>Households</span></button>
         <div className="sidebar-bottom">
           <div className="side-tip"><Sparkles size={16} /><span>{checkedItems.length} good things stocked.<br />{activeItems.length ? `Only ${activeItems.length} to grab!` : 'Your crew is all set!'}</span></div>
@@ -335,8 +496,8 @@ export default function App() {
       </main>
 
       {notice && <div className="toast" role="status"><CheckCheck size={16} />{notice}<button aria-label="Dismiss" onClick={() => setNotice('')}><X size={14} /></button></div>}
-      {modal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal('') }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close" aria-label="Close dialog" onClick={() => setModal('')}><X size={18} /></button>
-        {modal === 'profile' ? <form onSubmit={updateMember}><span className="modal-icon"><UsersRound size={20} /></span><div className="section-kicker">YOUR PROFILE</div><h2 id="modal-title">What should we call you?</h2><p>Your name shows up next to the things you add.</p><label className="field-label" htmlFor="member-name">Your name</label><input id="member-name" className="modal-input" autoFocus value={memberName} onChange={(event) => setMemberName(event.target.value)} maxLength={32} /><button className="button button-dark modal-submit" type="submit">Save name</button></form> : modal === 'create' ? <form onSubmit={createHousehold}><span className="modal-icon"><Leaf size={20} /></span><div className="section-kicker">A PLACE TO SHARE</div><h2 id="modal-title">Start a household</h2><p>Make a shared space for your people and the things you need.</p><label className="field-label" htmlFor="household-name">Household name</label><input id="household-name" className="modal-input" autoFocus placeholder="e.g. The Sunny Kitchen" value={householdName} onChange={(event) => setHouseholdName(event.target.value)} maxLength={48} /><button className="button button-dark modal-submit" type="submit">Create household <Plus size={16} /></button></form> : <form onSubmit={joinHousehold}><span className="modal-icon"><UsersRound size={20} /></span><div className="section-kicker">BETTER TOGETHER</div><h2 id="modal-title">Join a household</h2><p>Enter the invite code shared by someone at home.</p><label className="field-label" htmlFor="invite-code">Invite code</label><input id="invite-code" className="modal-input invite-input" autoFocus placeholder="e.g. SUNNY24" value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} maxLength={12} /><button className="button button-dark modal-submit" type="submit">Join household <Plus size={16} /></button><button className="modal-link" type="button" onClick={() => setModal('create')}>Or create a new household</button></form>}
+      {modal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal('') }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close" aria-label="Close dialog" onClick={() => { stopCameraStream(); setModal(''); }}><X size={18} /></button>
+        {modal === 'profile' ? <form onSubmit={updateMember}><span className="modal-icon"><UsersRound size={20} /></span><div className="section-kicker">YOUR PROFILE</div><h2 id="modal-title">What should we call you?</h2><p>Your name shows up next to the things you add.</p><label className="field-label" htmlFor="member-name">Your name</label><input id="member-name" className="modal-input" autoFocus value={memberName} onChange={(event) => setMemberName(event.target.value)} maxLength={32} /><button className="button button-dark modal-submit" type="submit">Save name</button></form> : modal === 'create' ? <form onSubmit={createHousehold}><span className="modal-icon"><Leaf size={20} /></span><div className="section-kicker">A PLACE TO SHARE</div><h2 id="modal-title">Start a household</h2><p>Make a shared space for your people and the things you need.</p><label className="field-label" htmlFor="household-name">Household name</label><input id="household-name" className="modal-input" autoFocus placeholder="e.g. The Sunny Kitchen" value={householdName} onChange={(event) => setHouseholdName(event.target.value)} maxLength={48} /><button className="button button-dark modal-submit" type="submit">Create household <Plus size={16} /></button></form> : modal === 'receipt' ? <form onSubmit={submitReceiptItems}><span className="modal-icon"><Camera size={20} /></span><div className="section-kicker">RECEIPT SCAN</div><h2 id="modal-title">Take a receipt photo</h2><p>Use your webcam or upload a receipt if the camera isn’t available. We’ll detect the groceries and add them to your fridge list.</p>{!receiptPreview ? <><div className="camera-stage">{cameraActive ? <video ref={cameraVideoRef} autoPlay playsInline muted className="camera-video" /> : <div className="camera-placeholder"><Camera size={26} /><span>Camera ready</span></div>}</div>{cameraError && <div className="camera-error">{cameraError}</div>}<div className="camera-actions"><button type="button" className="button button-dark" onClick={() => startCameraCapture()}>{cameraActive ? 'Restart camera' : 'Open camera'}</button><label className="button button-muted"><Upload size={15} /> Upload photo<input type="file" accept="image/*" capture="environment" onChange={handleReceiptUpload} /></label></div>{cameraActive && <button type="button" className="button button-dark modal-submit" onClick={captureReceiptPhoto}>Take photo</button>}</> : <><img src={receiptPreview} alt="Receipt preview" className="receipt-preview-image" />{isScanning ? <div className="receipt-status">Scanning your receipt…</div> : <><div className="receipt-item-list">{detectedItems.length ? detectedItems.map((item) => <span key={item} className="receipt-item-chip">{item}</span>) : <span className="receipt-empty-state">No groceries detected yet.</span>}</div>{detectedItems.length > 0 && <button className="button button-dark modal-submit" type="submit">Add {detectedItems.length} item{detectedItems.length === 1 ? '' : 's'} to fridge</button>}</> }<div className="camera-actions"><button type="button" className="button button-muted" onClick={() => { stopCameraStream(); if (receiptPreviewRef.current) URL.revokeObjectURL(receiptPreviewRef.current); receiptPreviewRef.current = ''; setReceiptPreview(''); setDetectedItems([]); setCameraError(''); }}>Try another photo</button><button type="button" className="button button-dark" onClick={() => startCameraCapture()}>Open camera</button></div></>}</form> : <form onSubmit={joinHousehold}><span className="modal-icon"><UsersRound size={20} /></span><div className="section-kicker">BETTER TOGETHER</div><h2 id="modal-title">Join a household</h2><p>Enter the invite code shared by someone at home.</p><label className="field-label" htmlFor="invite-code">Invite code</label><input id="invite-code" className="modal-input invite-input" autoFocus placeholder="e.g. SUNNY24" value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} maxLength={12} /><button className="button button-dark modal-submit" type="submit">Join household <Plus size={16} /></button><button className="modal-link" type="button" onClick={() => setModal('create')}>Or create a new household</button></form>}
       </section></div>}
     </div>
   )
