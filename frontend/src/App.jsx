@@ -97,6 +97,7 @@ export default function App() {
   const cameraVideoRef = useRef(null)
   const cameraStreamRef = useRef(null)
   const sentNotifications = useRef(new Set())
+  const shownExpiryNotices = useRef(new Set())
 
   useEffect(() => {
     localStorage.setItem('goodthings-household', householdId)
@@ -121,7 +122,7 @@ export default function App() {
 
   useEffect(() => {
     if (!notice) return undefined
-    const timer = window.setTimeout(() => setNotice(''), 2400)
+    const timer = window.setTimeout(() => setNotice(''), 10_000)
     return () => window.clearTimeout(timer)
   }, [notice])
 
@@ -158,9 +159,14 @@ export default function App() {
   }, [])
 
   const items = household?.items || []
+  const browserNotificationsBlocked = typeof Notification !== 'undefined' && Notification.permission === 'denied'
   const activeItems = useMemo(() => items.filter((item) => item.status === 'needed'), [items])
   const checkedItems = useMemo(() => items.filter((item) => item.status === 'inFridge'), [items])
-  const expiringItems = useMemo(() => checkedItems.filter((item) => item.expirationDate && daysUntilExpiration(item.expirationDate, clockTick) <= 3), [checkedItems, clockTick])
+  const expiringItems = useMemo(() => checkedItems.filter((item) => {
+    if (!item.expirationDate) return false
+    const daysRemaining = daysUntilExpiration(item.expirationDate, clockTick)
+    return daysRemaining >= 0 && daysRemaining <= 3
+  }), [checkedItems, clockTick])
   const lowStockItems = useMemo(() => checkedItems.filter((item) => Number(item.quantity ?? 3) <= 1), [checkedItems])
   const visibleItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -181,6 +187,18 @@ export default function App() {
   }, [notificationsEnabled])
 
   useEffect(() => {
+    const unseenItems = expiringItems.filter((item) => {
+      const key = `${item.id}-${item.expirationDate}`
+      if (shownExpiryNotices.current.has(key)) return false
+      shownExpiryNotices.current.add(key)
+      return true
+    })
+    if (unseenItems.length === 0) return
+    const names = unseenItems.map((item) => item.name).join(', ')
+    setNotice(`${names} ${unseenItems.length === 1 ? 'expires' : 'expire'} soon. Check your fridge.`)
+  }, [expiringItems])
+
+  useEffect(() => {
     if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return undefined
     const today = new Date(clockTick).toISOString().slice(0, 10)
     const due = [
@@ -190,8 +208,12 @@ export default function App() {
     due.forEach(({ item, kind, title, body }) => {
       const key = `${today}-${kind}-${item.id}`
       if (sentNotifications.current.has(key)) return
-      new Notification(title, { body, tag: key })
       sentNotifications.current.add(key)
+      try {
+        new Notification(title, { body, tag: key })
+      } catch {
+        setNotice('Browser alerts could not be shown. Check this site’s notification settings.')
+      }
     })
     return undefined
   }, [clockTick, expiringItems, lowStockItems, notificationsEnabled])
@@ -201,13 +223,18 @@ export default function App() {
   }
 
   async function toggleNotifications() {
+    if (typeof Notification === 'undefined') {
+      setNotice('This browser does not support desktop notifications')
+      return
+    }
+    if (Notification.permission === 'denied') {
+      setNotificationsEnabled(false)
+      setNotice('Browser alerts are blocked. Allow notifications for this site in browser settings.')
+      return
+    }
     if (notificationsEnabled) {
       setNotificationsEnabled(false)
       setNotice('Browser reminders paused')
-      return
-    }
-    if (typeof Notification === 'undefined') {
-      setNotice('This browser does not support desktop notifications')
       return
     }
     const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
@@ -391,8 +418,8 @@ export default function App() {
         <button className={spaceView === 'list' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('list')}><ShoppingBasket size={18} /><span>Grocery list</span><span className="nav-count">{activeItems.length}</span></button>
         <button className={spaceView === 'expiring' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('expiring')}><Clock3 size={18} /><span>Expiring soon</span><span className="nav-count alert-count">{expiringItems.length}</span></button>
         <button className={spaceView === 'low' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('low')}><AlertTriangle size={18} /><span>Running low</span><span className="nav-count alert-count">{lowStockItems.length}</span></button>
-        <button className="nav-item notification-nav" onClick={toggleNotifications}><Bell size={18} /><span>{notificationsEnabled ? 'Browser alerts on' : 'Turn on notifications'}</span><span className={`notification-dot ${notificationsEnabled ? 'notification-on' : ''}`} /></button>
         <button className="nav-item" onClick={() => setModal('receipt')}><Camera size={18} /><span>Receipt scan</span></button>
+        <button className="nav-item notification-nav" aria-label={browserNotificationsBlocked ? 'Browser alerts blocked' : notificationsEnabled ? 'Browser alerts on' : 'Turn on notifications'} title={browserNotificationsBlocked ? 'Allow notifications for this site in browser settings' : notificationsEnabled ? 'Pause browser reminders' : 'Enable browser reminders'} onClick={toggleNotifications}><Bell size={18} /><span>{browserNotificationsBlocked ? 'Browser alerts blocked' : notificationsEnabled ? 'Browser alerts on' : 'Turn on notifications'}</span><span className={`notification-dot ${notificationsEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted' ? 'notification-on' : ''}`} /></button>
         <button className="nav-item" onClick={() => setModal('join')}><UsersRound size={18} /><span>Households</span></button>
         <div className="sidebar-bottom">
           <div className="side-tip"><Sparkles size={16} /><span>{checkedItems.length} good things stocked.<br />{activeItems.length ? `Only ${activeItems.length} to grab!` : 'Your crew is all set!'}</span></div>
@@ -463,7 +490,7 @@ export default function App() {
                 {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : spaceView === 'expiring' ? 'Nothing needs using soon' : spaceView === 'low' ? 'Nothing is running low' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : spaceView === 'expiring' ? 'We’ll show fridge items with a best-by date in the next 3 days.' : spaceView === 'low' ? 'Fridge quantities will appear here when they reach 1 or less.' : selectedList === 'fridge' ? 'Mark items in the fridge when you bring them home; mark them used when they run out.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
                   <div className={`grocery-row ${item.status === 'inFridge' ? 'grocery-row-done' : ''}`} key={item.id}>
                     <button className="check-button" aria-label={item.status === 'inFridge' ? `Mark ${item.name} as used` : `Mark ${item.name} in the fridge`} onClick={() => toggleItem(item)}>{item.status === 'inFridge' && <Check size={14} strokeWidth={3} />}</button>
-                    <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span>{item.expirationDate && <span className="item-expiry">Expires {formatExpirationDate(item.expirationDate)}</span>}</div>
+                    <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span>{item.status === 'inFridge' && item.expirationDate && <span className="item-expiry">Expires {formatExpirationDate(item.expirationDate)}</span>}</div>
                     {item.status === 'inFridge' && <div className={`stock-adjuster ${Number(item.quantity ?? 3) <= 1 ? 'stock-adjuster-low' : ''}`}><button aria-label={`Use one ${item.name}`} title="Use one" disabled={Number(item.quantity ?? 3) === 0} onClick={() => emit('list:quantity', { itemId: item.id, quantity: Math.max(0, Number(item.quantity ?? 3) - 1) })}><Minus size={13} /></button><span>{item.quantity ?? 3}<small> left</small></span><button aria-label={`Add one ${item.name}`} title="Add one" onClick={() => emit('list:quantity', { itemId: item.id, quantity: Number(item.quantity ?? 3) + 1 })}><Plus size={13} /></button></div>}
                     <span className={`added-avatar avatar-${household?.members?.find((person) => person.name === item.addedBy)?.color || 'blue'}`} title={`Added by ${item.addedBy}`}>{item.addedBy.slice(0, 1).toUpperCase()}</span>
                     <span className="added-by">{item.addedBy}</span>
