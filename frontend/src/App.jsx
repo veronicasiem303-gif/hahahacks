@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 
 const defaultHousehold = "sunny-kitchen";
+const apiBaseUrl = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const socketUrl = import.meta.env.VITE_SOCKET_URL || undefined;
 const receiptStopWords = new Set([
   "total",
   "subtotal",
@@ -195,7 +197,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("goodthings-household", householdId);
-    fetch(`/api/households/${householdId}`)
+    fetch(`${apiBaseUrl}/api/households/${householdId}`)
       .then((response) => {
         if (!response.ok) throw new Error("Household not found");
         return response.json();
@@ -203,7 +205,7 @@ export default function App() {
       .then(setHousehold)
       .catch(() => setHousehold(null));
 
-    const socket = io();
+    const socket = io(socketUrl);
     socketRef.current = socket;
     socket.on("connect", () => {
       setConnected(true);
@@ -563,7 +565,7 @@ export default function App() {
     event.preventDefault();
     const name = householdName.trim();
     if (!name) return;
-    const response = await fetch("/api/households", {
+    const response = await fetch(`${apiBaseUrl}/api/households`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, memberName: member.name }),
@@ -582,7 +584,7 @@ export default function App() {
 
   async function joinHousehold(event) {
     event.preventDefault();
-    const response = await fetch("/api/households/join", {
+    const response = await fetch(`${apiBaseUrl}/api/households/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ inviteCode }),
