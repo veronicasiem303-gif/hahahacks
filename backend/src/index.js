@@ -6,7 +6,7 @@ import { Server } from 'socket.io'
 const app = express()
 const server = createServer(app)
 const io = new Server(server, {
-  cors: { origin: 'http://localhost:5173' },
+  cors: { origin: process.env.FRONTEND_URL || 'http://localhost:5173' },
 })
 const port = Number(process.env.PORT) || 4000
 
@@ -41,6 +41,7 @@ const households = new Map([
       { id: 'item-10', name: 'Lemons', category: 'Produce', addedBy: 'Leo', status: 'inFridge', quantity: 3, expirationDate: dateAfterDays(10) },
       { id: 'item-11', name: 'Eggs', category: 'Dairy & eggs', addedBy: 'Maya', status: 'needed', quantity: 3, expirationDate: dateAfterDays(8) },
       { id: 'item-12', name: 'Tortilla wraps', category: 'Bakery', addedBy: 'Jules', status: 'needed', quantity: 3, expirationDate: dateAfterDays(5) },
+      { id: 'item-13', name: 'Chicken', category: 'Produce', addedBy: 'Maya', status: 'needed', quantity: 3, expirationDate: dateAfterDays(5) },
     ],
   }],
 ])
@@ -72,6 +73,10 @@ function normalizeExpirationDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined
   const date = new Date(`${value}T00:00:00.000Z`)
   return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? undefined : value
+}
+
+function comparableItemName(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/s\b/g, '').replace(/\s+/g, ' ').trim()
 }
 
 app.get('/api/health', (_request, response) => response.json({ status: 'ok' }))
@@ -141,6 +146,38 @@ io.on('connection', (socket) => {
       expirationDate,
     })
     sendHousehold(household.id)
+  })
+
+  socket.on('receipt:add', ({ items = [] } = {}) => {
+    const household = households.get(socket.data.householdId)
+    if (!household || !Array.isArray(items)) return
+
+    const validItems = items.map((item) => ({
+      name: String(item?.name || '').trim(),
+      category: String(item?.category || 'Other').trim() || 'Other',
+      expirationDate: normalizeExpirationDate(item?.expirationDate),
+      status: item?.status === 'inFridge' ? 'inFridge' : 'needed',
+    })).filter((item) => item.name && item.expirationDate !== undefined)
+
+    validItems.forEach((item) => {
+      if (item.status === 'inFridge') {
+        const scannedName = comparableItemName(item.name)
+        household.items = household.items.filter((existingItem) => (
+          existingItem.status !== 'needed' || comparableItemName(existingItem.name) !== scannedName
+        ))
+      }
+
+      household.items.unshift({
+        id: randomUUID(),
+        name: item.name,
+        category: item.category,
+        addedBy: socket.data.member.name,
+        status: item.status,
+        quantity: 3,
+        expirationDate: item.expirationDate,
+      })
+    })
+    if (validItems.length) sendHousehold(household.id)
   })
 
   socket.on('list:toggle', ({ itemId } = {}) => {

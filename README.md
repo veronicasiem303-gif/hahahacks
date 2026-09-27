@@ -30,3 +30,13 @@ Set an optional expiration date when adding a grocery. The date appears beneath 
 - `backend/src/index.js`: household API, demo data, and Socket.IO events.
 
 Receipt scanning is a follow-on integration point; this starter focuses on household membership and the shared list.
+
+## Deploy
+
+The repository includes `vercel.json` for the frontend and `render.yaml` for the backend.
+
+1. Create a Render web service from this repository using the blueprint. Set `FRONTEND_URL` to the deployed Vercel URL.
+2. Create a Vercel project from this repository. Set `VITE_API_URL` and `VITE_SOCKET_URL` to the deployed Render URL, for example `https://myfridge-backend.onrender.com`.
+3. Redeploy Vercel after setting the environment variables.
+
+Local development continues to use the Vite proxy and `localhost:4000` when those variables are not set.
