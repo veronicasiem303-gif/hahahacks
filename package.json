@@ -1,7 +1,10 @@
 {
   "name": "goodthings-household-groceries",
   "private": true,
-  "workspaces": ["frontend", "backend"],
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
     "dev": "concurrently -k \"npm:dev --workspace frontend\" \"npm:dev --workspace backend\"",
     "build": "npm run build --workspace frontend",
@@ -11,5 +14,9 @@
   "devDependencies": {
     "concurrently": "^9.2.1",
     "oxlint": "^1.81.0"
+  },
+  "allowScripts": {
+    "tesseract.js@7.0.0": true,
+    "fsevents@2.3.3": true
   }
 }
