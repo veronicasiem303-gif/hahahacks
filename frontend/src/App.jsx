@@ -3,14 +3,18 @@ import Tesseract from 'tesseract.js'
 import { io } from 'socket.io-client'
 import {
   ArrowDownUp,
+  AlertTriangle,
+  Bell,
   Camera,
   Check,
   CheckCheck,
   ChevronDown,
+  Clock3,
   CircleHelp,
   ClipboardList,
   Copy,
   Leaf,
+  Minus,
   Plus,
   Radio,
   Search,
@@ -27,6 +31,13 @@ const receiptStopWords = new Set(['total', 'subtotal', 'tax', 'visa', 'mastercar
 
 function formatExpirationDate(value) {
   return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function daysUntilExpiration(value, timestamp) {
+  const today = new Date(timestamp)
+  today.setHours(0, 0, 0, 0)
+  const expiration = new Date(`${value}T00:00:00`)
+  return Math.round((expiration - today) / 86_400_000)
 }
 
 function readMember() {
@@ -65,6 +76,9 @@ export default function App() {
   const [connected, setConnected] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedList, setSelectedList] = useState('get')
+  const [spaceView, setSpaceView] = useState('list')
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('goodthings-notifications') === 'on')
+  const [clockTick, setClockTick] = useState(() => Date.now())
   const [newItem, setNewItem] = useState('')
   const [category, setCategory] = useState('Produce')
   const [expirationDate, setExpirationDate] = useState('')
@@ -82,6 +96,7 @@ export default function App() {
   const receiptPreviewRef = useRef('')
   const cameraVideoRef = useRef(null)
   const cameraStreamRef = useRef(null)
+  const sentNotifications = useRef(new Set())
 
   useEffect(() => {
     localStorage.setItem('goodthings-household', householdId)
@@ -143,16 +158,65 @@ export default function App() {
   }, [])
 
   const items = household?.items || []
-  const activeItems = items.filter((item) => !item.done)
-  const checkedItems = items.filter((item) => item.done)
+  const activeItems = useMemo(() => items.filter((item) => item.status === 'needed'), [items])
+  const checkedItems = useMemo(() => items.filter((item) => item.status === 'inFridge'), [items])
+  const expiringItems = useMemo(() => checkedItems.filter((item) => item.expirationDate && daysUntilExpiration(item.expirationDate, clockTick) <= 3), [checkedItems, clockTick])
+  const lowStockItems = useMemo(() => checkedItems.filter((item) => Number(item.quantity ?? 3) <= 1), [checkedItems])
   const visibleItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
-    const shouldBeDone = selectedList === 'fridge'
-    return items.filter((item) => item.done === shouldBeDone && (!normalizedQuery || `${item.name} ${item.category} ${item.addedBy}`.toLowerCase().includes(normalizedQuery)))
-  }, [items, query, selectedList])
+    const matchesQuery = (item) => !normalizedQuery || `${item.name} ${item.category} ${item.addedBy}`.toLowerCase().includes(normalizedQuery)
+    if (spaceView === 'expiring') return expiringItems.filter(matchesQuery)
+    if (spaceView === 'low') return lowStockItems.filter(matchesQuery)
+    const expectedStatus = selectedList === 'fridge' ? 'inFridge' : 'needed'
+    return items.filter((item) => item.status === expectedStatus && matchesQuery(item))
+  }, [expiringItems, items, lowStockItems, query, selectedList, spaceView])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setClockTick(Date.now()), 60_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('goodthings-notifications', notificationsEnabled ? 'on' : 'off')
+  }, [notificationsEnabled])
+
+  useEffect(() => {
+    if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return undefined
+    const today = new Date(clockTick).toISOString().slice(0, 10)
+    const due = [
+      ...expiringItems.map((item) => ({ item, kind: 'expiry', title: `${item.name} expires soon`, body: `Use it by ${formatExpirationDate(item.expirationDate)}.` })),
+      ...lowStockItems.map((item) => ({ item, kind: 'stock', title: `${item.name} is running low`, body: `${item.quantity ?? 3} left at home. Add it to your shared grocery list.` })),
+    ]
+    due.forEach(({ item, kind, title, body }) => {
+      const key = `${today}-${kind}-${item.id}`
+      if (sentNotifications.current.has(key)) return
+      new Notification(title, { body, tag: key })
+      sentNotifications.current.add(key)
+    })
+    return undefined
+  }, [clockTick, expiringItems, lowStockItems, notificationsEnabled])
 
   function emit(event, data) {
     socketRef.current?.emit(event, data)
+  }
+
+  async function toggleNotifications() {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false)
+      setNotice('Browser reminders paused')
+      return
+    }
+    if (typeof Notification === 'undefined') {
+      setNotice('This browser does not support desktop notifications')
+      return
+    }
+    const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
+    if (permission === 'granted') {
+      setNotificationsEnabled(true)
+      setNotice('Expiry and low-stock reminders are on')
+    } else {
+      setNotice('Allow browser notifications to turn on reminders')
+    }
   }
 
   function addItem(event) {
@@ -162,6 +226,12 @@ export default function App() {
     emit('list:add', { name, category, expirationDate })
     setNewItem('')
     setExpirationDate('')
+    setNotice(`${name} is on the list. Your housemates say thanks!`)
+  }
+
+  function toggleItem(item) {
+    emit('list:toggle', { itemId: item.id })
+    setNotice(item.status === 'needed' ? `${item.name} is in the fridge. Nice one!` : `${item.name} marked as used.`)
   }
 
   function stopCameraStream() {
@@ -249,7 +319,7 @@ export default function App() {
     if (!detectedItems.length) return
 
     detectedItems.forEach((name) => {
-      emit('list:add', { name, category: 'Other', expirationDate: '', done: true })
+      emit('list:add', { name, category: 'Other', expirationDate: '', status: 'inFridge' })
     })
 
     setReceiptPreview('')
@@ -318,11 +388,14 @@ export default function App() {
           <span>MyFridge<span className="brand-period">.</span></span>
         </a>
         <div className="side-label">YOUR SPACE</div>
-        <button className="nav-item nav-item-active"><ShoppingBasket size={18} /><span>Grocery list</span><span className="nav-count">{activeItems.length}</span></button>
+        <button className={spaceView === 'list' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('list')}><ShoppingBasket size={18} /><span>Grocery list</span><span className="nav-count">{activeItems.length}</span></button>
+        <button className={spaceView === 'expiring' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('expiring')}><Clock3 size={18} /><span>Expiring soon</span><span className="nav-count alert-count">{expiringItems.length}</span></button>
+        <button className={spaceView === 'low' ? 'nav-item nav-item-active' : 'nav-item'} onClick={() => setSpaceView('low')}><AlertTriangle size={18} /><span>Running low</span><span className="nav-count alert-count">{lowStockItems.length}</span></button>
+        <button className="nav-item notification-nav" onClick={toggleNotifications}><Bell size={18} /><span>{notificationsEnabled ? 'Browser alerts on' : 'Turn on notifications'}</span><span className={`notification-dot ${notificationsEnabled ? 'notification-on' : ''}`} /></button>
         <button className="nav-item" onClick={() => setModal('receipt')}><Camera size={18} /><span>Receipt scan</span></button>
         <button className="nav-item" onClick={() => setModal('join')}><UsersRound size={18} /><span>Households</span></button>
         <div className="sidebar-bottom">
-          <div className="side-tip"><Sparkles size={16} /><span>Little by little,<br />the fridge fills up.</span></div>
+          <div className="side-tip"><Sparkles size={16} /><span>{checkedItems.length} good things stocked.<br />{activeItems.length ? `Only ${activeItems.length} to grab!` : 'Your crew is all set!'}</span></div>
           <button className="profile-button" onClick={() => setModal('profile')}>
             <span className={`avatar avatar-${member.color}`}>{member.name.slice(0, 1).toUpperCase()}</span>
             <span className="profile-copy"><strong>{member.name}</strong><small>Household member</small></span>
@@ -343,9 +416,9 @@ export default function App() {
         <div className="content-wrap">
           <section className="welcome-row">
             <div>
-              <div className="eyebrow"><span className="eyebrow-line" /> THE HOUSEHOLD LIST</div>
-              <h1>Good food starts<br className="mobile-break" /> with a <span>good list.</span></h1>
-              <p className="welcome-copy">A little note from everyone, all in one place.</p>
+              <div className="eyebrow"><span className="eyebrow-line" /> MADE BETTER TOGETHER</div>
+              <h1>A happier home starts<br className="mobile-break" /> in the <span>fridge.</span></h1>
+              <p className="welcome-copy">Everyone adds a little. Your fridge gets a lot happier.</p>
             </div>
             <div className="household-actions">
               <div className="member-stack" aria-label={`${household?.members?.length || 0} household members`}>
@@ -361,7 +434,7 @@ export default function App() {
           <section className="dashboard-grid">
             <div className="list-panel">
               <div className="list-heading">
-                <div><div className="section-kicker">YOUR SHARED LIST</div><h2>{selectedList === 'get' ? 'Shopping list' : 'In your fridge'} <span className="item-count">{selectedList === 'get' ? activeItems.length : checkedItems.length}</span></h2></div>
+                <div><div className="section-kicker">{spaceView === 'expiring' ? 'USE BEFORE IT GOES' : spaceView === 'low' ? 'RESTOCK YOUR KITCHEN' : 'YOUR SHARED LIST'}</div><h2>{spaceView === 'expiring' ? 'Expiring soon' : spaceView === 'low' ? 'Running low' : selectedList === 'get' ? 'Shopping list' : 'In your fridge'} <span className="item-count">{visibleItems.length}</span></h2></div>
                 <div className="list-heading-actions">
                   {household?.inviteCode && <button className="invite-button" onClick={copyInvite}><Copy size={15} /><span>Invite</span></button>}
                   <button className="icon-button sort-button" aria-label="List options" title="List options"><ArrowDownUp size={16} /></button>
@@ -379,18 +452,19 @@ export default function App() {
               </form>
 
               <div className="list-toolbar">
-                <div className="list-tabs" role="group" aria-label="Choose which items to view">
+                {spaceView === 'list' && <div className="list-tabs" role="group" aria-label="Choose which items to view">
                   <button type="button" className={selectedList === 'get' ? 'list-tab-active' : 'list-tab-muted'} aria-pressed={selectedList === 'get'} onClick={() => setSelectedList('get')}>To get <b>{activeItems.length}</b></button>
                   <button type="button" className={selectedList === 'fridge' ? 'list-tab-active' : 'list-tab-muted'} aria-pressed={selectedList === 'fridge'} onClick={() => setSelectedList('fridge')}>In fridge <b>{checkedItems.length}</b></button>
-                </div>
+                </div>}
                 <label className="search-box"><Search size={15} /><input placeholder="Find an item" aria-label="Find an item" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>/</kbd></label>
               </div>
 
               <div className="grocery-list">
-                {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : selectedList === 'fridge' ? 'Check off an item on “To get” to move it here.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
-                  <div className={`grocery-row ${item.done ? 'grocery-row-done' : ''}`} key={item.id}>
-                    <button className="check-button" aria-label={item.done ? `Move ${item.name} back to To get` : `Mark ${item.name} in the fridge`} onClick={() => emit('list:toggle', { itemId: item.id })}>{item.done && <Check size={14} strokeWidth={3} />}</button>
+                {visibleItems.length === 0 ? <div className="empty-list"><span className="empty-list-icon"><ClipboardList size={23} /></span><strong>{query ? 'Nothing matches that search' : spaceView === 'expiring' ? 'Nothing needs using soon' : spaceView === 'low' ? 'Nothing is running low' : selectedList === 'fridge' ? 'Nothing in the fridge list yet' : 'Your list is nice and empty'}</strong><span>{query ? 'Try a different item or person.' : spaceView === 'expiring' ? 'We’ll show fridge items with a best-by date in the next 3 days.' : spaceView === 'low' ? 'Fridge quantities will appear here when they reach 1 or less.' : selectedList === 'fridge' ? 'Mark items in the fridge when you bring them home; mark them used when they run out.' : 'Add the first thing your household needs.'}</span></div> : visibleItems.map((item) => (
+                  <div className={`grocery-row ${item.status === 'inFridge' ? 'grocery-row-done' : ''}`} key={item.id}>
+                    <button className="check-button" aria-label={item.status === 'inFridge' ? `Mark ${item.name} as used` : `Mark ${item.name} in the fridge`} onClick={() => toggleItem(item)}>{item.status === 'inFridge' && <Check size={14} strokeWidth={3} />}</button>
                     <div className="grocery-item-copy"><strong>{item.name}</strong><span>{item.category}</span>{item.expirationDate && <span className="item-expiry">Expires {formatExpirationDate(item.expirationDate)}</span>}</div>
+                    {item.status === 'inFridge' && <div className={`stock-adjuster ${Number(item.quantity ?? 3) <= 1 ? 'stock-adjuster-low' : ''}`}><button aria-label={`Use one ${item.name}`} title="Use one" disabled={Number(item.quantity ?? 3) === 0} onClick={() => emit('list:quantity', { itemId: item.id, quantity: Math.max(0, Number(item.quantity ?? 3) - 1) })}><Minus size={13} /></button><span>{item.quantity ?? 3}<small> left</small></span><button aria-label={`Add one ${item.name}`} title="Add one" onClick={() => emit('list:quantity', { itemId: item.id, quantity: Number(item.quantity ?? 3) + 1 })}><Plus size={13} /></button></div>}
                     <span className={`added-avatar avatar-${household?.members?.find((person) => person.name === item.addedBy)?.color || 'blue'}`} title={`Added by ${item.addedBy}`}>{item.addedBy.slice(0, 1).toUpperCase()}</span>
                     <span className="added-by">{item.addedBy}</span>
                     <button className="row-remove" aria-label={`Remove ${item.name}`} title="Remove item" onClick={() => emit('list:remove', { itemId: item.id })}><Trash2 size={15} /></button>
